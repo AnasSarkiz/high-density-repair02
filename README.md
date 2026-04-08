@@ -1,6 +1,6 @@
 # high-density-repair02
 
-Simple Bun/TypeScript solver that repairs high-density routes near a node boundary.
+A Simple Bun/TypeScript solver that repairs high-density routes near a node boundary.
 
 ## Setup
 
