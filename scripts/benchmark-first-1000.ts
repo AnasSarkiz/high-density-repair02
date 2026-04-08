@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs"
+import { readdirSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
@@ -68,6 +68,36 @@ type SampleResult = {
   error?: string
 }
 
+type BenchmarkReport = {
+  sampleCount: number
+  succeeded: number
+  failed: number
+  totalSolveTimeMs: number
+  averageSolveTimeMs: number
+  totalTraceCount: number
+  totalIterations: number
+  boundaryRepairedCount: number
+  boundaryRepairedPercent: number
+  bufferRepairedCount: number
+  bufferRepairedPercent: number
+  metadata: {
+    margin: number
+    concurrency: number
+    scenarioLimitUsed: number
+  }
+  sampleResults: Array<{
+    sampleName: string
+    iterations: number
+    elapsedMs: number
+    totalTraceCount: number
+    boundaryHitCount: number
+    boundaryHitTraceCount: number
+    bufferHitCount: number
+    bufferHitTraceCount: number
+    error?: string
+  }>
+}
+
 type RunningSampleState = {
   sampleName: string
   workerId: number
@@ -78,6 +108,139 @@ const formatSummaryLine = (label: string, value: string | number) =>
   `  ${label.padEnd(22)} ${value}`
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error)
+const toPercent = (part: number, total: number) =>
+  total > 0 ? (part / total) * 100 : 0
+
+const buildBenchmarkReport = ({
+  results,
+  totalIterations,
+  margin,
+  concurrency,
+  scenarioLimitUsed,
+}: {
+  results: SampleResult[]
+  totalIterations: number
+  margin: number
+  concurrency: number
+  scenarioLimitUsed: number
+}): BenchmarkReport => {
+  const failed = results.filter((result) => result.error).length
+  const succeeded = results.length - failed
+  const succeededResults = results.filter((result) => !result.error)
+  const totalSolveTimeMs = results.reduce(
+    (sum, result) => sum + result.elapsedMs,
+    0,
+  )
+  const totalTraceCount = results.reduce(
+    (sum, result) => sum + result.totalTraceCount,
+    0,
+  )
+  const boundaryRepairedCount = succeededResults.filter(
+    (result) => result.boundaryHitCount === 0,
+  ).length
+  const bufferRepairedCount = succeededResults.filter(
+    (result) => result.bufferHitCount === 0,
+  ).length
+
+  return {
+    sampleCount: results.length,
+    succeeded,
+    failed,
+    totalSolveTimeMs,
+    averageSolveTimeMs:
+      results.length > 0 ? totalSolveTimeMs / results.length : 0,
+    totalTraceCount,
+    totalIterations,
+    boundaryRepairedCount,
+    boundaryRepairedPercent: toPercent(boundaryRepairedCount, succeeded),
+    bufferRepairedCount,
+    bufferRepairedPercent: toPercent(bufferRepairedCount, succeeded),
+    metadata: {
+      margin,
+      concurrency,
+      scenarioLimitUsed,
+    },
+    sampleResults: results.map((result) => ({
+      sampleName: result.sampleName,
+      iterations: result.iterations,
+      elapsedMs: result.elapsedMs,
+      totalTraceCount: result.totalTraceCount,
+      boundaryHitCount: result.boundaryHitCount,
+      boundaryHitTraceCount: result.boundaryHitTraceCount,
+      bufferHitCount: result.bufferHitCount,
+      bufferHitTraceCount: result.bufferHitTraceCount,
+      ...(result.error ? { error: result.error } : {}),
+    })),
+  }
+}
+
+const writeBenchmarkReport = (report: BenchmarkReport) => {
+  writeFileSync("benchmark-result.json", `${JSON.stringify(report, null, 2)}\n`)
+}
+
+const logBenchmarkSummary = (report: BenchmarkReport) => {
+  const boundaryLabel = `${report.boundaryRepairedCount}/${report.succeeded} (${report.boundaryRepairedPercent.toFixed(2)}%)`
+  const bufferLabel = `${report.bufferRepairedCount}/${report.succeeded} (${report.bufferRepairedPercent.toFixed(2)}%)`
+  const tableRows: Array<[string, string]> = [
+    ["Samples", String(report.sampleCount)],
+    ["Succeeded", String(report.succeeded)],
+    ["Failed", String(report.failed)],
+    ["Total traces", String(report.totalTraceCount)],
+    ["Total iterations", String(report.totalIterations)],
+    ["Total solve time", formatMs(report.totalSolveTimeMs)],
+    ["Average solve time", formatMs(report.averageSolveTimeMs)],
+    ["Boundary repaired %", boundaryLabel],
+    ["Buffer repaired %", bufferLabel],
+  ]
+  const metricHeader = "Metric"
+  const valueHeader = "Value"
+  const metricWidth = Math.max(
+    metricHeader.length,
+    ...tableRows.map(([metric]) => metric.length),
+  )
+  const valueWidth = Math.max(
+    valueHeader.length,
+    ...tableRows.map(([, value]) => value.length),
+  )
+  const horizontal = `+${"-".repeat(metricWidth + 2)}+${"-".repeat(valueWidth + 2)}+`
+  const renderRow = (left: string, right: string) =>
+    `| ${left.padEnd(metricWidth)} | ${right.padEnd(valueWidth)} |`
+
+  console.log("")
+  console.log("Benchmark summary")
+  console.log(formatSummaryLine("Samples", report.sampleCount))
+  console.log(formatSummaryLine("Succeeded", report.succeeded))
+  console.log(formatSummaryLine("Failed", report.failed))
+  console.log(formatSummaryLine("Total traces", report.totalTraceCount))
+  console.log(formatSummaryLine("Total iterations", report.totalIterations))
+  console.log(
+    formatSummaryLine("Total solve time", formatMs(report.totalSolveTimeMs)),
+  )
+  console.log(
+    formatSummaryLine(
+      "Average solve time",
+      formatMs(report.averageSolveTimeMs),
+    ),
+  )
+  console.log("")
+  console.log("Repairs")
+  console.log(formatSummaryLine("Boundary", boundaryLabel))
+  console.log(
+    formatSummaryLine(
+      `Boundary buffer ${report.metadata.margin} mm area`,
+      bufferLabel,
+    ),
+  )
+  console.log("")
+  console.log("Benchmark summary table")
+  console.log(horizontal)
+  console.log(renderRow(metricHeader, valueHeader))
+  console.log(horizontal)
+  for (const [metric, value] of tableRows) {
+    console.log(renderRow(metric, value))
+  }
+  console.log(horizontal)
+}
 
 const parseNumberArg = (flag: string, fallback: number) => {
   const index = Bun.argv.indexOf(flag)
@@ -291,63 +454,16 @@ const runMain = async () => {
       void worker.terminate()
 
       if (completed >= samplePaths.length) {
-        const failed = results.filter((result) => result.error).length
-        const succeeded = results.length - failed
-        const succeededResults = results.filter((result) => !result.error)
-        const totalSampleSolveTimeMs = results.reduce(
-          (sum, result) => sum + result.elapsedMs,
-          0,
-        )
-        const totalTraceCount = results.reduce(
-          (sum, result) => sum + result.totalTraceCount,
-          0,
-        )
-        const boundaryRepairedSampleCount = succeededResults.filter(
-          (result) => result.boundaryHitCount === 0,
-        ).length
-        const bufferRepairedSampleCount = succeededResults.filter(
-          (result) => result.bufferHitCount === 0,
-        ).length
-        const boundaryRepairPercent =
-          succeeded > 0 ? (boundaryRepairedSampleCount / succeeded) * 100 : 0
-        const bufferRepairPercent =
-          succeeded > 0 ? (bufferRepairedSampleCount / succeeded) * 100 : 0
-
-        console.log("")
-        console.log("Benchmark summary")
-        console.log(formatSummaryLine("Samples", results.length))
-        console.log(formatSummaryLine("Succeeded", succeeded))
-        console.log(formatSummaryLine("Failed", failed))
-        console.log(formatSummaryLine("Total traces", totalTraceCount))
-        console.log(formatSummaryLine("Total iterations", totalIterations))
-        console.log(
-          formatSummaryLine(
-            "Total solve time",
-            formatMs(totalSampleSolveTimeMs),
-          ),
-        )
-        console.log(
-          formatSummaryLine(
-            "Average solve time",
-            formatMs(totalSampleSolveTimeMs / results.length),
-          ),
-        )
-        console.log("")
-        console.log("Repairs")
-        console.log(
-          formatSummaryLine(
-            "Boundary",
-            `${boundaryRepairedSampleCount}/${succeeded} (${boundaryRepairPercent.toFixed(2)}%)`,
-          ),
-        )
-        console.log(
-          formatSummaryLine(
-            `Boundary buffer ${margin} mm area`,
-            `${bufferRepairedSampleCount}/${succeeded} (${bufferRepairPercent.toFixed(2)}%)`,
-          ),
-        )
-
-        process.exitCode = failed > 0 ? 1 : 0
+        const report = buildBenchmarkReport({
+          results,
+          totalIterations,
+          margin,
+          concurrency,
+          scenarioLimitUsed: samplePaths.length,
+        })
+        logBenchmarkSummary(report)
+        writeBenchmarkReport(report)
+        process.exitCode = report.failed > 0 ? 1 : 0
         return
       }
 
@@ -375,6 +491,15 @@ const runMain = async () => {
       })
 
       if (completed >= samplePaths.length) {
+        const report = buildBenchmarkReport({
+          results,
+          totalIterations,
+          margin,
+          concurrency,
+          scenarioLimitUsed: samplePaths.length,
+        })
+        logBenchmarkSummary(report)
+        writeBenchmarkReport(report)
         process.exitCode = 1
         return
       }

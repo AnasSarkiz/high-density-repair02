@@ -255,6 +255,9 @@ jobs:
           if [ -f benchmark-result.txt ]; then
             cp benchmark-result.txt benchmark-result-pr.txt
           fi
+          if [ -f benchmark-result.json ]; then
+            cp benchmark-result.json benchmark-result-pr.json
+          fi
 
       - name: Download main branch benchmark result
         if: always() && github.event_name == 'issue_comment'
@@ -264,6 +267,7 @@ jobs:
           RUN_ID=$(gh api "repos/${{ github.repository }}/actions/workflows/benchmark.yml/runs?branch=main&event=push&status=success&per_page=1" --jq '.workflow_runs[0].id' 2>/dev/null || echo "")
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
             echo "(no main branch benchmark result available)" > benchmark-result-main.txt
+            echo "" > benchmark-result-main.json
             exit 0
           fi
           gh run download "$RUN_ID" --repo "${{ github.repository }}" --name benchmark-result --dir ./main-artifact 2>/dev/null || true
@@ -271,6 +275,11 @@ jobs:
             cp ./main-artifact/benchmark-result.txt benchmark-result-main.txt
           else
             echo "(no main branch benchmark result available)" > benchmark-result-main.txt
+          fi
+          if [ -f ./main-artifact/benchmark-result.json ]; then
+            cp ./main-artifact/benchmark-result.json benchmark-result-main.json
+          else
+            echo "" > benchmark-result-main.json
           fi
 
       - name: Upload benchmark result
@@ -280,8 +289,11 @@ jobs:
           name: benchmark-result
           path: |
             ./benchmark-result.txt
+            ./benchmark-result.json
             ./benchmark-result-pr.txt
+            ./benchmark-result-pr.json
             ./benchmark-result-main.txt
+            ./benchmark-result-main.json
           overwrite: true
           if-no-files-found: ignore
 
@@ -294,13 +306,79 @@ jobs:
             const fs = require('node:fs')
             const maxLength = 60000
             const truncate = (s, max) => s.length > max ? `${s.slice(0, max)}\n\n...truncated...` : s
+            const formatDuration = (value) => {
+              if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a'
+              return value < 1000 ? `${Math.round(value)}ms` : `${(value / 1000).toFixed(2)}s`
+            }
+            const formatSignedInteger = (value) => {
+              if (!Number.isFinite(value) || value === 0) return value === 0 ? '0' : 'n/a'
+              return value > 0 ? `+${Math.round(value)}` : `${Math.round(value)}`
+            }
+            const formatSignedDuration = (value) => {
+              if (!Number.isFinite(value) || value === 0) return value === 0 ? '0ms' : 'n/a'
+              const absolute = Math.abs(value)
+              const rendered = absolute < 1000 ? `${Math.round(absolute)}ms` : `${(absolute / 1000).toFixed(2)}s`
+              return value > 0 ? `+${rendered}` : `-${rendered}`
+            }
+            const formatSignedPercentPoints = (value) => {
+              if (!Number.isFinite(value) || value === 0) return value === 0 ? '0.00pp' : 'n/a'
+              const rendered = `${Math.abs(value).toFixed(2)}pp`
+              return value > 0 ? `+${rendered}` : `-${rendered}`
+            }
+            const readJson = (path) => {
+              if (!fs.existsSync(path)) return null
+              const raw = fs.readFileSync(path, 'utf8').trim()
+              if (!raw) return null
+              try {
+                return JSON.parse(raw)
+              } catch {
+                return null
+              }
+            }
             const readText = (path) => {
               if (!fs.existsSync(path)) return null
               return fs.readFileSync(path, 'utf8').trim()
             }
+            const buildDeltaMap = (report, baseline) => {
+              if (!report || !baseline) return null
+              return {
+                sampleCount: report.sampleCount - baseline.sampleCount,
+                succeeded: report.succeeded - baseline.succeeded,
+                failed: report.failed - baseline.failed,
+                averageSolveTimeMs: report.averageSolveTimeMs - baseline.averageSolveTimeMs,
+                boundaryRepairedPercent: report.boundaryRepairedPercent - baseline.boundaryRepairedPercent,
+                bufferRepairedPercent: report.bufferRepairedPercent - baseline.bufferRepairedPercent,
+              }
+            }
+            const renderSummaryTable = (report, baseline = null) => {
+              if (!report) return ['Summary table unavailable.']
+              const delta = buildDeltaMap(report, baseline)
+              const boundaryLabel = `${report.boundaryRepairedCount}/${report.succeeded} (${Number(report.boundaryRepairedPercent ?? 0).toFixed(2)}%)`
+              const bufferLabel = `${report.bufferRepairedCount}/${report.succeeded} (${Number(report.bufferRepairedPercent ?? 0).toFixed(2)}%)`
+              return [
+                ...(report.metadata
+                  ? [
+                      `Concurrency: ${report.metadata.concurrency}`,
+                      `Margin: ${report.metadata.margin} mm`,
+                      `Scenario limit used: ${report.metadata.scenarioLimitUsed}`,
+                      '',
+                    ]
+                  : []),
+                '| Metric | Value | Delta vs Main |',
+                '| --- | --- | --- |',
+                `| Samples | ${report.sampleCount} | ${delta ? formatSignedInteger(delta.sampleCount) : 'n/a'} |`,
+                `| Succeeded | ${report.succeeded} | ${delta ? formatSignedInteger(delta.succeeded) : 'n/a'} |`,
+                `| Failed | ${report.failed} | ${delta ? formatSignedInteger(delta.failed) : 'n/a'} |`,
+                `| Avg solve time | ${formatDuration(report.averageSolveTimeMs)} | ${delta ? formatSignedDuration(delta.averageSolveTimeMs) : 'n/a'} |`,
+                `| Boundary repaired % | ${boundaryLabel} | ${delta ? formatSignedPercentPoints(delta.boundaryRepairedPercent) : 'n/a'} |`,
+                `| Buffer repaired % | ${bufferLabel} | ${delta ? formatSignedPercentPoints(delta.bufferRepairedPercent) : 'n/a'} |`,
+              ]
+            }
 
             const prText = readText('benchmark-result-pr.txt') ?? readText('benchmark-result.txt') ?? '(benchmark output unavailable)'
             const mainText = readText('benchmark-result-main.txt') ?? '(main benchmark output unavailable)'
+            const prReport = readJson('benchmark-result-pr.json') ?? readJson('benchmark-result.json')
+            const mainReport = readJson('benchmark-result-main.json')
             const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
             const jobStatus = '${{ job.status }}'
             const benchmarkFailed = jobStatus !== 'success'
@@ -315,19 +393,31 @@ jobs:
                   ]
                 : []),
               '<details>',
-              '<summary>📊 Main Branch Output</summary>',
+              '<summary>📊 Main Branch Results</summary>',
+              '',
+              ...renderSummaryTable(mainReport),
+              '',
+              '<details>',
+              '<summary>Raw output</summary>',
               '',
               '```',
               truncate(mainText, 25000),
               '```',
               '</details>',
+              '</details>',
               '',
               '<details open>',
-              '<summary>📊 PR Output</summary>',
+              '<summary>📊 PR Results</summary>',
+              '',
+              ...renderSummaryTable(prReport, mainReport),
+              '',
+              '<details>',
+              '<summary>Raw output</summary>',
               '',
               '```',
               truncate(prText, 25000),
               '```',
+              '</details>',
               '</details>',
               '',
               `🔗 Workflow: [View run](${runUrl})`,
