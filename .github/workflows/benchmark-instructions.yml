@@ -37,7 +37,7 @@ jobs:
               "- `/benchmark --scenario-limit 100 --margin 0.4 --progress-interval 250` -> run with custom margin and progress interval",
               "",
               "Any PR whose title contains `[BENCHMARK TEST]` will automatically run the benchmark workflow on PR updates.",
-            ].join("\\n")
+            ].join("\n")
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
