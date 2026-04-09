@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import "graphics-debug/matcher"
-import { renderInitialState } from "./fixtures/visualize-datasets"
+import { renderInitialState } from "./fixtures/visualize-solver"
 
 test("visual snapshot: sample0816 initial state", async () => {
   const graphics = await renderInitialState("sample0816")
