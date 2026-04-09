@@ -11,11 +11,11 @@ on:
   workflow_dispatch:
     inputs:
       scenario_limit:
-        description: Scenario limit (number or "all"). Default: 5000.
+        description: 'Scenario limit (number or "all"). Default: 5000.'
         required: false
         type: string
       dataset:
-        description: Dataset selection (dataset01, dataset02, or all). Default: all.
+        description: 'Dataset selection (dataset01, dataset02, or all). Default: all.'
         required: false
         type: string
       concurrency:
