@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import "graphics-debug/matcher"
 import { HighDensityRepairSolver } from "../lib/high-density-repair-solver"
-import { renderInitialState } from "./fixtures/visualize-solver"
+import { renderInitialState } from "./fixtures/visualize-datasets"
 
 test("visual snapshot: sample0809 initial state", async () => {
   const graphics = await renderInitialState("sample0809")
