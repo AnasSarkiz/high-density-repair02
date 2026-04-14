@@ -3,6 +3,7 @@ import { createMovedRoute } from "../functions/createMovedRoute"
 import { findBoundaryTouchRegressions } from "../functions/findBoundaryTouchRegressions"
 import {
   findClearanceConflicts,
+  getClearanceConflictKey,
   type ClearanceConflict,
 } from "../functions/findClearanceConflicts"
 import { findNewUnpushableZeroClearanceConflicts } from "../functions/findNewUnpushableZeroClearanceConflicts"
@@ -24,6 +25,7 @@ export const evaluateRouteMove = ({
   currentRoutes,
   routeIndex,
   side,
+  moveSide = side,
   boundary,
   margin,
   moveAmount,
@@ -32,6 +34,7 @@ export const evaluateRouteMove = ({
   currentRoutes: HdRoute[]
   routeIndex: number
   side: BoundarySide
+  moveSide?: BoundarySide
   boundary: BoundaryRect
   margin: number
   moveAmount: number
@@ -46,12 +49,16 @@ export const evaluateRouteMove = ({
   }
 
   const candidateRouteIndexes = new Set<number>()
+  const candidateRoutePointIndexes = new Map<number, Set<number>>()
   const movedTwoPointRouteIndexes = new Set<number>()
   const candidateRoutes = cloneRoutes(currentRoutes)
   let rejected = false
   let rejectionReason = "overlap"
   const queuedRouteIndexes = new Set<number>([routeIndex])
   const queuedRouteLayers = new Map<number, Set<"top" | "bottom" | "via">>([
+    [routeIndex, new Set()],
+  ])
+  const queuedRoutePointIndexes = new Map<number, Set<number>>([
     [routeIndex, new Set()],
   ])
   const routeQueue = [routeIndex]
@@ -62,12 +69,7 @@ export const evaluateRouteMove = ({
   let candidateZeroConflicts: ClearanceConflict[] | null = null
 
   const getConflictKeys = (conflicts: ClearanceConflict[]) =>
-    new Set(
-      conflicts.map(
-        ({ routeIndexes, layers }) =>
-          `${routeIndexes[0]}:${layers[0]}:${routeIndexes[1]}:${layers[1]}`,
-      ),
-    )
+    new Set(conflicts.map((conflict) => getClearanceConflictKey(conflict)))
 
   const getCurrentMarginConflicts = () => {
     if (currentMarginConflicts) return currentMarginConflicts
@@ -76,6 +78,7 @@ export const evaluateRouteMove = ({
       candidateRouteIndexes,
       margin,
       geometryCache,
+      candidateRoutePointIndexes,
     )
     return currentMarginConflicts
   }
@@ -87,6 +90,7 @@ export const evaluateRouteMove = ({
       candidateRouteIndexes,
       margin,
       geometryCache,
+      candidateRoutePointIndexes,
     )
     return candidateMarginConflicts
   }
@@ -98,6 +102,7 @@ export const evaluateRouteMove = ({
       candidateRouteIndexes,
       0,
       geometryCache,
+      candidateRoutePointIndexes,
     )
     return currentZeroConflicts
   }
@@ -109,6 +114,7 @@ export const evaluateRouteMove = ({
       candidateRouteIndexes,
       0,
       geometryCache,
+      candidateRoutePointIndexes,
     )
     return candidateZeroConflicts
   }
@@ -123,11 +129,19 @@ export const evaluateRouteMove = ({
     const activePreferredLayers = Array.from(
       queuedRouteLayers.get(activeRouteIndex) ?? [],
     )
+    const activePreferredPointIndexes = Array.from(
+      queuedRoutePointIndexes.get(activeRouteIndex) ?? [],
+    )
     queuedRouteLayers.delete(activeRouteIndex)
+    queuedRoutePointIndexes.delete(activeRouteIndex)
     const activeMovableIndexes =
       activeRouteIndex === routeIndex
         ? getRouteMovableIndexes(activeRoute, boundary, side, margin)
-        : getRoutePushableIndexes(activeRoute, activePreferredLayers)
+        : getRoutePushableIndexes(
+            activeRoute,
+            activePreferredLayers,
+            activePreferredPointIndexes,
+          )
 
     if (activeMovableIndexes.length === 0) {
       if (activeRouteIndex === routeIndex) {
@@ -142,23 +156,31 @@ export const evaluateRouteMove = ({
     const targetAxisValue =
       activeRouteIndex === routeIndex
         ? undefined
-        : side === "left" || side === "right"
+        : moveSide === "left" || moveSide === "right"
           ? (activePoints[activeMovableIndexes[0]]?.x ?? 0) +
-            (side === "left" ? moveAmount : -moveAmount)
+            (moveSide === "left" ? moveAmount : -moveAmount)
           : (activePoints[activeMovableIndexes[0]]?.y ?? 0) +
-            (side === "top" ? -moveAmount : moveAmount)
+            (moveSide === "top" ? -moveAmount : moveAmount)
 
     candidateRoutes[activeRouteIndex] = createMovedRoute(
       activeRoute,
       activeMovableIndexes,
       boundary,
-      side,
+      moveSide,
       moveAmount,
       margin,
       targetAxisValue,
       activeRouteIndex !== routeIndex,
     )
     candidateRouteIndexes.add(activeRouteIndex)
+    candidateRoutePointIndexes.set(
+      activeRouteIndex,
+      new Set(activeMovableIndexes),
+    )
+    currentMarginConflicts = null
+    candidateMarginConflicts = null
+    currentZeroConflicts = null
+    candidateZeroConflicts = null
 
     if ((activeRoute.route?.length ?? 0) === 2) {
       movedTwoPointRouteIndexes.add(activeRouteIndex)
@@ -196,9 +218,18 @@ export const evaluateRouteMove = ({
       new Set([activeRouteIndex]),
       margin,
       geometryCache,
+      new Map([[activeRouteIndex, new Set(activeMovableIndexes)]]),
     )
 
     for (const conflict of adjacencyConflicts) {
+      if (
+        getConflictKeys(getCurrentMarginConflicts()).has(
+          getClearanceConflictKey(conflict),
+        )
+      ) {
+        continue
+      }
+
       const [firstRouteIndex, secondRouteIndex] = conflict.routeIndexes
       const firstMoved = candidateRouteIndexes.has(firstRouteIndex)
       const secondMoved = candidateRouteIndexes.has(secondRouteIndex)
@@ -208,6 +239,9 @@ export const evaluateRouteMove = ({
       const nextRouteLayer = firstMoved
         ? conflict.layers[1]
         : conflict.layers[0]
+      const nextRoutePointIndexes = firstMoved
+        ? conflict.routePointIndexes[1]
+        : conflict.routePointIndexes[0]
 
       if (
         !candidateRouteIndexes.has(nextRouteIndex) &&
@@ -216,6 +250,10 @@ export const evaluateRouteMove = ({
         queuedRouteIndexes.add(nextRouteIndex)
         routeQueue.push(nextRouteIndex)
         queuedRouteLayers.set(nextRouteIndex, new Set([nextRouteLayer]))
+        queuedRoutePointIndexes.set(
+          nextRouteIndex,
+          new Set(nextRoutePointIndexes),
+        )
         continue
       }
 
@@ -225,6 +263,13 @@ export const evaluateRouteMove = ({
           new Set<"top" | "bottom" | "via">()
         existingLayers.add(nextRouteLayer)
         queuedRouteLayers.set(nextRouteIndex, existingLayers)
+
+        const existingPointIndexes =
+          queuedRoutePointIndexes.get(nextRouteIndex) ?? new Set<number>()
+        for (const index of nextRoutePointIndexes) {
+          existingPointIndexes.add(index)
+        }
+        queuedRoutePointIndexes.set(nextRouteIndex, existingPointIndexes)
       }
     }
   }
@@ -249,6 +294,31 @@ export const evaluateRouteMove = ({
 
     for (const conflictKey of candidateZeroConflictKeys) {
       if (currentZeroConflictKeys.has(conflictKey)) continue
+      rejected = true
+      rejectionReason = "eventual-overlap"
+      break
+    }
+  }
+
+  if (!rejected) {
+    const currentFullZeroConflictKeys = new Set(
+      findClearanceConflicts(
+        currentRoutes,
+        candidateRouteIndexes,
+        0,
+        geometryCache,
+      ).map((conflict) => getClearanceConflictKey(conflict)),
+    )
+    const candidateFullZeroConflicts = findClearanceConflicts(
+      candidateRoutes,
+      candidateRouteIndexes,
+      0,
+      geometryCache,
+    )
+
+    for (const conflict of candidateFullZeroConflicts) {
+      const conflictKey = getClearanceConflictKey(conflict)
+      if (currentFullZeroConflictKeys.has(conflictKey)) continue
       rejected = true
       rejectionReason = "eventual-overlap"
       break
@@ -291,7 +361,7 @@ export const evaluateRouteMove = ({
       currentRoutes,
       candidateRoutes,
       candidateRouteIndexes,
-      maximumAllowedClearance: Math.min(moveAmount / 2, 0.1),
+      maximumAllowedClearance: Math.min(margin / 2, 0.1),
     })
 
     if (traceClearanceRegressions.length > 0) {
