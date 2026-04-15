@@ -19,10 +19,10 @@ type TraceViolationCandidate = {
 }
 
 const MARKER_CLUSTER_DISTANCE = 0.28
-const MIN_MARKER_RADIUS = 0.11
-const MAX_MARKER_RADIUS = 0.24
+const MIN_MARKER_RADIUS = 0.2
+const MAX_MARKER_RADIUS = 0.3
 const MARKER_STROKE = "#f59e0b"
-const MARKER_FILL = "rgba(245, 158, 11, 0.26)"
+const MARKER_FILL = "rgba(245, 158, 11, 0.46)"
 
 const distance = (first: XY, second: XY) =>
   Math.hypot(first.x - second.x, first.y - second.y)
