@@ -18,7 +18,7 @@ bun run start
 ```
 
 - `bun run start`: open interactive Cosmos debugger.
-- `./benchmark.sh`: run benchmark on dataset samples (default first 5000 combined samples from `dataset01` + `dataset02`).
+- `./benchmark.sh`: run benchmark on dataset samples (default first 5000 combined samples from `dataset01` + `dataset02`) and report boundary repair, trace-clearance clean, and buffer repair rates.
 
 ## Quick Usage
 
@@ -64,6 +64,7 @@ bun install
 - Main export: `HighDensityRepairSolver` from `lib/index.ts`
 - Tests are visual snapshots in `tests/`
 - Benchmark script options: `./benchmark.sh --help`
+- Benchmark output is written to `benchmark-result.json` with per-sample boundary, trace-clearance, and buffer violation counts.
 - Benchmark datasets:
   - `dataset01`: `sample*.json` from `datasets/dataset01` (symlink to `node_modules/dataset-hd08/samples`)
   - `dataset02`: circuit/bugreport/repro JSON inputs from `datasets/dataset02`
