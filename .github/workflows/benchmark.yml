@@ -350,6 +350,8 @@ jobs:
             }
             const buildDeltaMap = (report, baseline) => {
               if (!report || !baseline) return null
+              const reportTraceRepairedPercent = Number(report.traceRepairedPercent)
+              const baselineTraceRepairedPercent = Number(baseline.traceRepairedPercent)
               return {
                 sampleCount: report.sampleCount - baseline.sampleCount,
                 succeeded: report.succeeded - baseline.succeeded,
@@ -359,6 +361,11 @@ jobs:
                 totalSolveTimeMs: report.totalSolveTimeMs - baseline.totalSolveTimeMs,
                 averageSolveTimeMs: report.averageSolveTimeMs - baseline.averageSolveTimeMs,
                 boundaryRepairedPercent: report.boundaryRepairedPercent - baseline.boundaryRepairedPercent,
+                traceRepairedPercent:
+                  Number.isFinite(reportTraceRepairedPercent) &&
+                  Number.isFinite(baselineTraceRepairedPercent)
+                    ? reportTraceRepairedPercent - baselineTraceRepairedPercent
+                    : null,
                 bufferRepairedPercent: report.bufferRepairedPercent - baseline.bufferRepairedPercent,
               }
             }
@@ -368,6 +375,13 @@ jobs:
               const baseline = options.baseline ?? null
               const delta = buildDeltaMap(report, baseline)
               const boundaryLabel = `${report.boundaryRepairedCount}/${report.succeeded} (${Number(report.boundaryRepairedPercent ?? 0).toFixed(2)}%)`
+              const traceRepairedCount = Number(report.traceRepairedCount)
+              const traceRepairedPercent = Number(report.traceRepairedPercent)
+              const traceLabel =
+                Number.isFinite(traceRepairedCount) &&
+                Number.isFinite(traceRepairedPercent)
+                  ? `${traceRepairedCount}/${report.succeeded} (${traceRepairedPercent.toFixed(2)}%)`
+                  : 'n/a'
               const bufferLabel = `${report.bufferRepairedCount}/${report.succeeded} (${Number(report.bufferRepairedPercent ?? 0).toFixed(2)}%)`
               const mainTable = [
                 '| Metric | Value |',
@@ -380,6 +394,7 @@ jobs:
                 `| Total solve time | ${formatDuration(report.totalSolveTimeMs)} |`,
                 `| Average solve time | ${formatDuration(report.averageSolveTimeMs)} |`,
                 `| Boundary repaired % | ${boundaryLabel} |`,
+                `| Trace-clearance clean % | ${traceLabel} |`,
                 `| Buffer repaired % | ${bufferLabel} |`,
               ]
               const prTable = [
@@ -393,6 +408,7 @@ jobs:
                 `| Total solve time | ${formatDuration(report.totalSolveTimeMs)} | ${delta ? formatSignedDuration(delta.totalSolveTimeMs) : 'n/a'} |`,
                 `| Average solve time | ${formatDuration(report.averageSolveTimeMs)} | ${delta ? formatSignedDuration(delta.averageSolveTimeMs) : 'n/a'} |`,
                 `| Boundary repaired % | ${boundaryLabel} | ${delta ? formatSignedPercentPoints(delta.boundaryRepairedPercent) : 'n/a'} |`,
+                `| Trace-clearance clean % | ${traceLabel} | ${delta && delta.traceRepairedPercent !== null ? formatSignedPercentPoints(delta.traceRepairedPercent) : 'n/a'} |`,
                 `| Buffer repaired % | ${bufferLabel} | ${delta ? formatSignedPercentPoints(delta.bufferRepairedPercent) : 'n/a'} |`,
               ]
               return [
