@@ -3,8 +3,8 @@ import type { GraphicsObject } from "graphics-debug"
 import { cloneRoutes } from "./high-density-repair-solver/functions/cloneRoutes"
 import { createBoundryViolationRects } from "./high-density-repair-solver/functions/createBoundryViolationRects"
 import { createTraceViolationCircles } from "./high-density-repair-solver/functions/createTraceViolationCircles"
-import { findClearanceConflicts } from "./high-density-repair-solver/functions/findClearanceConflicts"
 import { findInteriorDiagonalSegmentsInBufferZone } from "./high-density-repair-solver/functions/findInteriorDiagonalSegmentsInBufferZone"
+import { findTraceViolations } from "./high-density-repair-solver/functions/findTraceViolations"
 import { getBoundaryRect } from "./high-density-repair-solver/functions/getBoundaryRect"
 import { getRoutePointLayer } from "./high-density-repair-solver/functions/getRoutePointLayer"
 import { splitRouteIntoLayerSegments } from "./high-density-repair-solver/functions/splitRouteIntoLayerSegments"
@@ -139,40 +139,9 @@ export class HighDensityRepairSolver extends BaseSolver {
     return this.getBoundryViolationsForFrame(this.getCurrentFrame()).length
   }
 
-  private getRouteNetNames(route: HdRoute | undefined): string[] {
-    if (!route) return []
-    const names = [route.connectionName, route.rootConnectionName].filter(
-      (name): name is string => Boolean(name),
-    )
-    return Array.from(new Set(names))
-  }
-
-  private areRoutesSameNet(
-    firstRoute: HdRoute | undefined,
-    secondRoute: HdRoute | undefined,
-  ): boolean {
-    const firstNames = this.getRouteNetNames(firstRoute)
-    const secondNames = this.getRouteNetNames(secondRoute)
-    if (firstNames.length === 0 || secondNames.length === 0) return false
-    return firstNames.some((name) => secondNames.includes(name))
-  }
-
   private getCurrentTraceViolationCount(): number {
     const frame = this.getCurrentFrame()
-    const routes = frame.routes
-    const movedRouteIndexes = new Set(routes.map((_, routeIndex) => routeIndex))
-    return findClearanceConflicts(
-      routes,
-      movedRouteIndexes,
-      TRACE_CLEARANCE_REGRESSION_MAX,
-    ).filter(
-      (conflict) =>
-        !(conflict.layers[0] === "via" && conflict.layers[1] === "via") &&
-        !this.areRoutesSameNet(
-          routes[conflict.routeIndexes[0]],
-          routes[conflict.routeIndexes[1]],
-        ),
-    ).length
+    return findTraceViolations(frame.routes).length
   }
 
   override visualize(): GraphicsObject {

@@ -19,6 +19,7 @@ import type {
   VisualizationFrame,
 } from "../shared/types"
 import { processBoundarySide } from "./processBoundarySide"
+import { resolveTraceClearanceConflicts } from "./resolveTraceClearanceConflicts"
 
 const introducesNewClearanceConflicts = (
   currentRoutes: HdRoute[],
@@ -189,6 +190,13 @@ export const buildRepairFrames = (
     routes: repairedRoutes,
     boundary,
     clearanceMargin: margin,
+  })
+
+  resolveTraceClearanceConflicts({
+    routes: repairedRoutes,
+    boundary,
+    margin,
+    geometryCache,
   })
 
   frames.push(

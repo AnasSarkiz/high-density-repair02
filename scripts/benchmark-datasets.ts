@@ -7,13 +7,15 @@ import {
   Worker,
   workerData,
 } from "node:worker_threads"
-import type { DatasetSample, HdRoute } from "../lib/high-density-repair-solver"
+import type { DatasetSample } from "../lib/high-density-repair-solver"
 import { HighDensityRepairSolver } from "../lib/high-density-repair-solver"
-import { findClearanceConflicts } from "../lib/high-density-repair-solver/functions/findClearanceConflicts"
 import { findBufferZoneSegmentsNotStraightFromBoundary } from "../lib/high-density-repair-solver/functions/findBufferZoneSegmentsNotStraightFromBoundary"
 import { findInteriorDiagonalSegmentsInBufferZone } from "../lib/high-density-repair-solver/functions/findInteriorDiagonalSegmentsInBufferZone"
+import {
+  findTraceViolations,
+  getTraceViolationTraceCount,
+} from "../lib/high-density-repair-solver/functions/findTraceViolations"
 import { getBoundaryRect } from "../lib/high-density-repair-solver/functions/getBoundaryRect"
-import { TRACE_CLEARANCE_REGRESSION_MAX } from "../lib/high-density-repair-solver/shared/constants"
 
 // Run with: bun run benchmark:datasets
 
@@ -141,45 +143,6 @@ const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error)
 const toPercent = (part: number, total: number) =>
   total > 0 ? (part / total) * 100 : 0
-const getRouteNetNames = (route: HdRoute) =>
-  Array.from(
-    new Set(
-      [route.connectionName, route.rootConnectionName].filter(
-        (name): name is string => Boolean(name),
-      ),
-    ),
-  )
-
-const areRoutesSameNet = (
-  firstRoute: HdRoute | undefined,
-  secondRoute: HdRoute | undefined,
-) => {
-  if (!firstRoute || !secondRoute) return false
-
-  const firstNames = getRouteNetNames(firstRoute)
-  const secondNames = getRouteNetNames(secondRoute)
-  if (firstNames.length === 0 || secondNames.length === 0) return false
-
-  return firstNames.some((name) => secondNames.includes(name))
-}
-
-const getTraceViolations = (routes: HdRoute[]) => {
-  const movedRouteIndexes = new Set(routes.map((_, routeIndex) => routeIndex))
-
-  return findClearanceConflicts(
-    routes,
-    movedRouteIndexes,
-    TRACE_CLEARANCE_REGRESSION_MAX,
-  ).filter(
-    (conflict) =>
-      !(conflict.layers[0] === "via" && conflict.layers[1] === "via") &&
-      !areRoutesSameNet(
-        routes[conflict.routeIndexes[0]],
-        routes[conflict.routeIndexes[1]],
-      ),
-  )
-}
-
 const buildBenchmarkReport = ({
   results,
   totalIterations,
@@ -522,13 +485,12 @@ const runWorker = async () => {
           margin,
         )
       : []
-    const traceViolations = getTraceViolations(solver.repairedRoutes)
+    const traceViolations = findTraceViolations(solver.repairedRoutes)
     const boundryViolationTraceCount = new Set(
       boundryViolations.map((violation) => violation.routeIndex),
     ).size
-    const traceViolationTraceCount = new Set(
-      traceViolations.flatMap((violation) => violation.routeIndexes),
-    ).size
+    const traceViolationTraceCount =
+      getTraceViolationTraceCount(traceViolations)
     const bufferHitTraceCount = new Set(bufferHits.map((hit) => hit.routeIndex))
       .size
 
