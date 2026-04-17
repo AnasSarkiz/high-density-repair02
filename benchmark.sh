@@ -23,6 +23,7 @@ Options:
 
 Defaults:
   Running ./benchmark.sh with no parameters benchmarks first 5000 combined samples from dataset01 + dataset02.
+  The report includes boundary, trace-clearance, and buffer repair metrics.
 
 Examples:
   ./benchmark.sh

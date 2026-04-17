@@ -7,11 +7,13 @@ import {
   Worker,
   workerData,
 } from "node:worker_threads"
-import type { DatasetSample } from "../lib/high-density-repair-solver"
+import type { DatasetSample, HdRoute } from "../lib/high-density-repair-solver"
 import { HighDensityRepairSolver } from "../lib/high-density-repair-solver"
+import { findClearanceConflicts } from "../lib/high-density-repair-solver/functions/findClearanceConflicts"
 import { findBufferZoneSegmentsNotStraightFromBoundary } from "../lib/high-density-repair-solver/functions/findBufferZoneSegmentsNotStraightFromBoundary"
 import { findInteriorDiagonalSegmentsInBufferZone } from "../lib/high-density-repair-solver/functions/findInteriorDiagonalSegmentsInBufferZone"
 import { getBoundaryRect } from "../lib/high-density-repair-solver/functions/getBoundaryRect"
+import { TRACE_CLEARANCE_REGRESSION_MAX } from "../lib/high-density-repair-solver/shared/constants"
 
 // Run with: bun run benchmark:datasets
 
@@ -21,6 +23,11 @@ type WorkerInput = {
   samplePath: string
   margin: number
   progressIntervalMs: number
+}
+
+type AssetSolverInput = {
+  sample?: DatasetSample
+  margin?: number
 }
 
 type WorkerProgressMessage = {
@@ -41,6 +48,8 @@ type WorkerDoneMessage = {
   totalTraceCount: number
   boundryViolationCount: number
   boundryViolationTraceCount: number
+  traceViolationCount: number
+  traceViolationTraceCount: number
   bufferHitCount: number
   bufferHitTraceCount: number
 }
@@ -68,6 +77,8 @@ type SampleResult = {
   totalTraceCount: number
   boundryViolationCount: number
   boundryViolationTraceCount: number
+  traceViolationCount: number
+  traceViolationTraceCount: number
   bufferHitCount: number
   bufferHitTraceCount: number
   error?: string
@@ -83,6 +94,8 @@ type BenchmarkReport = {
   totalIterations: number
   boundaryRepairedCount: number
   boundaryRepairedPercent: number
+  traceRepairedCount: number
+  traceRepairedPercent: number
   bufferRepairedCount: number
   bufferRepairedPercent: number
   metadata: {
@@ -99,6 +112,8 @@ type BenchmarkReport = {
     totalTraceCount: number
     boundryViolationCount: number
     boundryViolationTraceCount: number
+    traceViolationCount: number
+    traceViolationTraceCount: number
     bufferHitCount: number
     bufferHitTraceCount: number
     error?: string
@@ -126,6 +141,44 @@ const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error)
 const toPercent = (part: number, total: number) =>
   total > 0 ? (part / total) * 100 : 0
+const getRouteNetNames = (route: HdRoute) =>
+  Array.from(
+    new Set(
+      [route.connectionName, route.rootConnectionName].filter(
+        (name): name is string => Boolean(name),
+      ),
+    ),
+  )
+
+const areRoutesSameNet = (
+  firstRoute: HdRoute | undefined,
+  secondRoute: HdRoute | undefined,
+) => {
+  if (!firstRoute || !secondRoute) return false
+
+  const firstNames = getRouteNetNames(firstRoute)
+  const secondNames = getRouteNetNames(secondRoute)
+  if (firstNames.length === 0 || secondNames.length === 0) return false
+
+  return firstNames.some((name) => secondNames.includes(name))
+}
+
+const getTraceViolations = (routes: HdRoute[]) => {
+  const movedRouteIndexes = new Set(routes.map((_, routeIndex) => routeIndex))
+
+  return findClearanceConflicts(
+    routes,
+    movedRouteIndexes,
+    TRACE_CLEARANCE_REGRESSION_MAX,
+  ).filter(
+    (conflict) =>
+      !(conflict.layers[0] === "via" && conflict.layers[1] === "via") &&
+      !areRoutesSameNet(
+        routes[conflict.routeIndexes[0]],
+        routes[conflict.routeIndexes[1]],
+      ),
+  )
+}
 
 const buildBenchmarkReport = ({
   results,
@@ -156,6 +209,9 @@ const buildBenchmarkReport = ({
   const boundaryRepairedCount = succeededResults.filter(
     (result) => result.boundryViolationCount === 0,
   ).length
+  const traceRepairedCount = succeededResults.filter(
+    (result) => result.traceViolationCount === 0,
+  ).length
   const bufferRepairedCount = succeededResults.filter(
     (result) => result.bufferHitCount === 0,
   ).length
@@ -171,6 +227,8 @@ const buildBenchmarkReport = ({
     totalIterations,
     boundaryRepairedCount,
     boundaryRepairedPercent: toPercent(boundaryRepairedCount, succeeded),
+    traceRepairedCount,
+    traceRepairedPercent: toPercent(traceRepairedCount, succeeded),
     bufferRepairedCount,
     bufferRepairedPercent: toPercent(bufferRepairedCount, succeeded),
     metadata: {
@@ -187,6 +245,8 @@ const buildBenchmarkReport = ({
       totalTraceCount: result.totalTraceCount,
       boundryViolationCount: result.boundryViolationCount,
       boundryViolationTraceCount: result.boundryViolationTraceCount,
+      traceViolationCount: result.traceViolationCount,
+      traceViolationTraceCount: result.traceViolationTraceCount,
       bufferHitCount: result.bufferHitCount,
       bufferHitTraceCount: result.bufferHitTraceCount,
       ...(result.error ? { error: result.error } : {}),
@@ -200,6 +260,7 @@ const writeBenchmarkReport = (report: BenchmarkReport) => {
 
 const logBenchmarkSummary = (report: BenchmarkReport) => {
   const boundaryLabel = `${report.boundaryRepairedCount}/${report.succeeded} (${report.boundaryRepairedPercent.toFixed(2)}%)`
+  const traceLabel = `${report.traceRepairedCount}/${report.succeeded} (${report.traceRepairedPercent.toFixed(2)}%)`
   const bufferLabel = `${report.bufferRepairedCount}/${report.succeeded} (${report.bufferRepairedPercent.toFixed(2)}%)`
   const tableRows: Array<[string, string]> = [
     ["Samples", String(report.sampleCount)],
@@ -210,6 +271,7 @@ const logBenchmarkSummary = (report: BenchmarkReport) => {
     ["Total solve time", formatMs(report.totalSolveTimeMs)],
     ["Average solve time", formatMs(report.averageSolveTimeMs)],
     ["Boundary repaired %", boundaryLabel],
+    ["Trace-clearance clean %", traceLabel],
     ["Buffer repaired %", bufferLabel],
   ]
   const metricHeader = "Metric"
@@ -245,6 +307,7 @@ const logBenchmarkSummary = (report: BenchmarkReport) => {
   console.log("")
   console.log("Repairs")
   console.log(formatSummaryLine("Boundary", boundaryLabel))
+  console.log(formatSummaryLine("Trace-clearance clean", traceLabel))
   console.log(
     formatSummaryLine(
       `Boundary buffer ${report.metadata.margin} mm area`,
@@ -273,6 +336,15 @@ const parseNumberArg = (flag: string, fallback: number) => {
   }
 
   return value
+}
+
+const getWorkerSampleInput = async (samplePath: string) => {
+  const input = (await Bun.file(samplePath).json()) as
+    | DatasetSample
+    | AssetSolverInput
+  const hasWrappedSample =
+    "sample" in input && input.sample && typeof input.sample === "object"
+  return hasWrappedSample ? input.sample : input
 }
 
 const parseScenarioLimitArg = (
@@ -391,7 +463,7 @@ const runWorker = async () => {
   const { dataset, sampleName, samplePath, margin, progressIntervalMs } =
     workerData as WorkerInput
 
-  const sample = (await Bun.file(samplePath).json()) as DatasetSample
+  const sample = await getWorkerSampleInput(samplePath)
   const solver = new HighDensityRepairSolver({
     sample,
     margin,
@@ -450,8 +522,12 @@ const runWorker = async () => {
           margin,
         )
       : []
+    const traceViolations = getTraceViolations(solver.repairedRoutes)
     const boundryViolationTraceCount = new Set(
       boundryViolations.map((violation) => violation.routeIndex),
+    ).size
+    const traceViolationTraceCount = new Set(
+      traceViolations.flatMap((violation) => violation.routeIndexes),
     ).size
     const bufferHitTraceCount = new Set(bufferHits.map((hit) => hit.routeIndex))
       .size
@@ -466,6 +542,8 @@ const runWorker = async () => {
       totalTraceCount: solver.repairedRoutes.length,
       boundryViolationCount: boundryViolations.length,
       boundryViolationTraceCount,
+      traceViolationCount: traceViolations.length,
+      traceViolationTraceCount,
       bufferHitCount: bufferHits.length,
       bufferHitTraceCount,
     } satisfies WorkerDoneMessage)
@@ -547,13 +625,22 @@ const runMain = async () => {
           totalTraceCount: message.totalTraceCount,
           boundryViolationCount: message.boundryViolationCount,
           boundryViolationTraceCount: message.boundryViolationTraceCount,
+          traceViolationCount: message.traceViolationCount,
+          traceViolationTraceCount: message.traceViolationTraceCount,
           bufferHitCount: message.bufferHitCount,
           bufferHitTraceCount: message.bufferHitTraceCount,
         })
-        if (message.boundryViolationCount > 0 || message.bufferHitCount > 0) {
+        if (
+          message.boundryViolationCount > 0 ||
+          message.traceViolationCount > 0 ||
+          message.bufferHitCount > 0
+        ) {
           const hitParts = [
             message.boundryViolationCount > 0
               ? `boundryViolations=${message.boundryViolationCount} boundryViolationTraces=${message.boundryViolationTraceCount}`
+              : null,
+            message.traceViolationCount > 0
+              ? `traceViolations=${message.traceViolationCount} traceViolationTraces=${message.traceViolationTraceCount}`
               : null,
             message.bufferHitCount > 0
               ? `bufferHits=${message.bufferHitCount} bufferHitTraces=${message.bufferHitTraceCount}`
@@ -574,6 +661,8 @@ const runMain = async () => {
           totalTraceCount: 0,
           boundryViolationCount: 0,
           boundryViolationTraceCount: 0,
+          traceViolationCount: 0,
+          traceViolationTraceCount: 0,
           bufferHitCount: 0,
           bufferHitTraceCount: 0,
           error: message.error,
@@ -619,6 +708,8 @@ const runMain = async () => {
         totalTraceCount: 0,
         boundryViolationCount: 0,
         boundryViolationTraceCount: 0,
+        traceViolationCount: 0,
+        traceViolationTraceCount: 0,
         bufferHitCount: 0,
         bufferHitTraceCount: 0,
         error: errorMessage,
