@@ -32,8 +32,9 @@ type CleanupScore = {
 }
 
 const MAX_CLEANUP_PASSES = 2
+const MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT = 8
 const CLEANUP_STEPS = [0.05, 0.1] as const
-const CLEANUP_ESCAPE_STEPS = [0.2, 0.3, 0.4] as const
+const CLEANUP_ESCAPE_STEPS = [0.2, 0.3] as const
 const CLEANUP_DIRECTIONS: XY[] = [
   { x: 1, y: 0 },
   { x: -1, y: 0 },
@@ -872,6 +873,16 @@ export const resolveTraceClearanceConflicts = ({
       const conflict = currentScore.traceViolations[conflictIndex]
       if (!conflict) break
       let acceptedConflictMove = false
+      let candidateAttempts = 0
+
+      const tryCandidate = (candidate: CandidateRoutes | null) => {
+        if (!candidate) return false
+        if (candidateAttempts >= MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT) {
+          return false
+        }
+        candidateAttempts += 1
+        return tryAcceptCandidate(candidate)
+      }
 
       for (const step of CLEANUP_STEPS) {
         for (const direction of CLEANUP_DIRECTIONS) {
@@ -884,20 +895,23 @@ export const resolveTraceClearanceConflicts = ({
 
           for (const moves of moveGroups) {
             const candidate = createCandidateRoutes(routes, moves)
-            if (!candidate) continue
-
-            if (tryAcceptCandidate(candidate)) {
+            if (tryCandidate(candidate)) {
               acceptedMove = true
               acceptedConflictMove = true
               break
             }
           }
+          if (candidateAttempts >= MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT) break
           if (acceptedConflictMove) break
         }
+        if (candidateAttempts >= MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT) break
         if (acceptedConflictMove) break
       }
 
-      if (!acceptedConflictMove) {
+      if (
+        !acceptedConflictMove &&
+        candidateAttempts < MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT
+      ) {
         for (const step of CLEANUP_ESCAPE_STEPS) {
           for (const direction of CLEANUP_DIRECTIONS) {
             const moveGroups = getCandidateMoveGroups({
@@ -909,86 +923,106 @@ export const resolveTraceClearanceConflicts = ({
 
             for (const moves of moveGroups) {
               const candidate = createCandidateRoutes(routes, moves)
-              if (!candidate) continue
-
-              if (tryAcceptCandidate(candidate)) {
+              if (tryCandidate(candidate)) {
                 acceptedMove = true
                 acceptedConflictMove = true
                 break
               }
             }
+            if (candidateAttempts >= MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT) break
             if (acceptedConflictMove) break
           }
+          if (candidateAttempts >= MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT) break
           if (acceptedConflictMove) break
         }
       }
 
-      if (!acceptedConflictMove) {
+      if (
+        !acceptedConflictMove &&
+        candidateAttempts < MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT
+      ) {
         for (const candidate of createEndpointLayerSwapCandidates({
           routes,
           conflict,
         })) {
-          if (tryAcceptCandidate(candidate)) {
+          if (tryCandidate(candidate)) {
             acceptedMove = true
             acceptedConflictMove = true
             break
           }
+          if (candidateAttempts >= MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT) break
         }
       }
 
-      if (!acceptedConflictMove) {
+      if (
+        !acceptedConflictMove &&
+        candidateAttempts < MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT
+      ) {
         for (const candidate of createDoglegCandidates({
           routes,
           conflict,
           boundary,
           margin,
         })) {
-          if (tryAcceptCandidate(candidate)) {
+          if (tryCandidate(candidate)) {
             acceptedMove = true
             acceptedConflictMove = true
             break
           }
+          if (candidateAttempts >= MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT) break
         }
       }
 
-      if (!acceptedConflictMove) {
+      if (
+        !acceptedConflictMove &&
+        candidateAttempts < MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT
+      ) {
         for (const candidate of createSegmentLayerSwapCandidates({
           routes,
           conflict,
         })) {
-          if (tryAcceptCandidate(candidate)) {
+          if (tryCandidate(candidate)) {
             acceptedMove = true
             acceptedConflictMove = true
             break
           }
+          if (candidateAttempts >= MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT) break
         }
       }
 
-      if (!acceptedConflictMove) {
+      if (
+        !acceptedConflictMove &&
+        candidateAttempts < MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT
+      ) {
         for (const candidate of createClosedLoopCollapseCandidates({
           routes,
           conflict,
         })) {
-          if (tryAcceptCandidate(candidate)) {
+          if (tryCandidate(candidate)) {
             acceptedMove = true
             acceptedConflictMove = true
             break
           }
+          if (candidateAttempts >= MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT) break
         }
       }
 
-      if (!acceptedConflictMove) {
+      if (
+        !acceptedConflictMove &&
+        candidateAttempts < MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT
+      ) {
         for (const candidate of createSegmentDoglegCandidates({
           routes,
           conflict,
           boundary,
           margin,
         })) {
-          if (tryAcceptCandidate(candidate)) {
+          if (tryCandidate(candidate)) {
             acceptedMove = true
             acceptedConflictMove = true
             break
           }
+          if (candidateAttempts >= MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT) break
         }
       }
 
