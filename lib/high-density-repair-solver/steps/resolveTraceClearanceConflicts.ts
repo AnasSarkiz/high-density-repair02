@@ -33,6 +33,8 @@ type CleanupScore = {
 
 const MAX_CLEANUP_PASSES = 2
 const MAX_CANDIDATE_ATTEMPTS_PER_CONFLICT = 8
+const MAX_ACCEPTED_MOVES = 48
+const MAX_CLEANUP_ELAPSED_MS = 20
 const CLEANUP_STEPS = [0.05, 0.1] as const
 const CLEANUP_ESCAPE_STEPS = [0.2, 0.3] as const
 const CLEANUP_DIRECTIONS: XY[] = [
@@ -819,6 +821,8 @@ export const resolveTraceClearanceConflicts = ({
   margin: number
   geometryCache: RouteGeometryCache
 }) => {
+  const cleanupStartedAt = performance.now()
+  let acceptedMoves = 0
   let currentScore = getCleanupScore(routes, boundary, margin, geometryCache)
   if (currentScore.traceViolationCount === 0) return
   const tryAcceptCandidate = (candidate: CandidateRoutes) => {
@@ -862,6 +866,7 @@ export const resolveTraceClearanceConflicts = ({
 
     routes.splice(0, routes.length, ...candidateRoutes)
     currentScore = candidateScore
+    acceptedMoves += 1
     return true
   }
 
@@ -870,6 +875,10 @@ export const resolveTraceClearanceConflicts = ({
     let conflictIndex = 0
 
     while (conflictIndex < currentScore.traceViolations.length) {
+      if (acceptedMoves >= MAX_ACCEPTED_MOVES) return
+      if (performance.now() - cleanupStartedAt >= MAX_CLEANUP_ELAPSED_MS) {
+        return
+      }
       const conflict = currentScore.traceViolations[conflictIndex]
       if (!conflict) break
       let acceptedConflictMove = false
