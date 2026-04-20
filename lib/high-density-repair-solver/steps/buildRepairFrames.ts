@@ -1,3 +1,4 @@
+import { clampRoutePointsToBoundary } from "../functions/clampRoutePointsToBoundary"
 import { cloneRoute } from "../functions/cloneRoute"
 import { cloneRoutes } from "../functions/cloneRoutes"
 import { createFinalFrame } from "../functions/createFinalFrame"
@@ -7,11 +8,17 @@ import {
   findClearanceConflicts,
   getClearanceConflictKey,
 } from "../functions/findClearanceConflicts"
+import { findInteriorDiagonalSegmentsInBufferZone } from "../functions/findInteriorDiagonalSegmentsInBufferZone"
 import { findTraceClearanceRegressions } from "../functions/findTraceClearanceRegressions"
 import { getBoundaryRect } from "../functions/getBoundaryRect"
 import { normalizeBoundaryAnchoredRoutes } from "../functions/normalizeBoundaryAnchoredRoutes"
-import { BOUNDARY_SIDES, EPSILON } from "../shared/constants"
+import {
+  BOUNDARY_SIDES,
+  EPSILON,
+  MAX_REPAIR_PASSES,
+} from "../shared/constants"
 import type {
+  BoundaryRect,
   BuildRepairFramesResult,
   DatasetSample,
   HdRoute,
@@ -19,6 +26,7 @@ import type {
   VisualizationFrame,
 } from "../shared/types"
 import { processBoundarySide } from "./processBoundarySide"
+import { targetedBoundaryCleanup } from "./targetedBoundaryCleanup"
 
 const introducesNewClearanceConflicts = (
   currentRoutes: HdRoute[],
@@ -135,6 +143,22 @@ const nudgeInteriorPointsInsideBoundary = ({
   }
 }
 
+const countBoundaryViolations = (
+  routes: HdRoute[],
+  boundary: BoundaryRect,
+  margin: number,
+) => findInteriorDiagonalSegmentsInBufferZone(routes, boundary, margin).length
+
+/**
+ * Rotate side ordering per pass to avoid always processing the same side first,
+ * which bakes in a bias in the single-pass repair.
+ */
+const getSidesForPass = (pass: number) => {
+  const order = BOUNDARY_SIDES
+  const rotated = [...order.slice(pass % order.length), ...order.slice(0, pass % order.length)]
+  return rotated
+}
+
 export const buildRepairFrames = (
   sample: DatasetSample | undefined,
   requestedMargin: number | undefined,
@@ -142,8 +166,11 @@ export const buildRepairFrames = (
 ): BuildRepairFramesResult => {
   const boundary = getBoundaryRect(sample?.nodeWithPortPoints)
   const baseRoutes = boundary
-    ? normalizeBoundaryAnchoredRoutes(
-        cloneRoutes(sample?.nodeHdRoutes ?? []),
+    ? clampRoutePointsToBoundary(
+        normalizeBoundaryAnchoredRoutes(
+          cloneRoutes(sample?.nodeHdRoutes ?? []),
+          boundary,
+        ),
         boundary,
       )
     : cloneRoutes(sample?.nodeHdRoutes ?? [])
@@ -168,22 +195,65 @@ export const buildRepairFrames = (
   const frames: VisualizationFrame[] = captureProgressFrames
     ? [createInitialFrame(cloneRoutes(repairedRoutes), margin)]
     : []
-  const lockedTwoPointRoutes = new Set<number>()
   const geometryCache: RouteGeometryCache = new WeakMap()
 
-  for (const side of BOUNDARY_SIDES) {
-    processBoundarySide({
-      side,
-      sample,
-      boundary,
-      frames,
-      margin,
+  let lastViolationCount = countBoundaryViolations(
+    repairedRoutes,
+    boundary,
+    margin,
+  )
+
+  for (let pass = 0; pass < MAX_REPAIR_PASSES; pass += 1) {
+    // Reset locked routes each pass: after a bridge move, a route is no
+    // longer 2-point anyway, but on later passes we want the option to
+    // re-shift it to eliminate remaining boundary violations.
+    const lockedTwoPointRoutes = new Set<number>()
+    let totalMovesAccepted = 0
+
+    for (const side of getSidesForPass(pass)) {
+      const { movesAccepted } = processBoundarySide({
+        side,
+        sample,
+        boundary,
+        frames,
+        margin,
+        repairedRoutes,
+        captureProgressFrames,
+        lockedTwoPointRoutes,
+        geometryCache,
+        // On retry passes, 2-point routes without an adjacent obstacle can
+        // still be bridged inward when they cause boundary violations.
+        allowTwoPointWithoutObstacle: pass >= 1,
+      })
+      totalMovesAccepted += movesAccepted
+    }
+
+    const currentViolationCount = countBoundaryViolations(
       repairedRoutes,
-      captureProgressFrames,
-      lockedTwoPointRoutes,
-      geometryCache,
-    })
+      boundary,
+      margin,
+    )
+
+    // Stop early once we can't make progress anymore.
+    if (totalMovesAccepted === 0) break
+    if (currentViolationCount === 0) break
+    if (currentViolationCount >= lastViolationCount) break
+    lastViolationCount = currentViolationCount
   }
+
+  // After the standard side-pass loop, run a targeted cleanup that nudges
+  // points sitting FLUSH along a boundary side off the edge far enough
+  // to stop being counted as a boundary violation. This handles the (very
+  // common) case where the main repair pushes routes by `moveAmount` but
+  // leaves points exactly on the boundary, because their endpoints were
+  // clamped there. The cleanup itself iterates internally per route, so
+  // we only need to call it once.
+  targetedBoundaryCleanup({
+    routes: repairedRoutes,
+    boundary,
+    margin,
+    geometryCache,
+  })
 
   nudgeInteriorPointsInsideBoundary({
     routes: repairedRoutes,
