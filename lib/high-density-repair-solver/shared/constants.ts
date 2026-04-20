@@ -10,4 +10,3 @@ export const TRACE_CLEARANCE_REGRESSION_MAX = 0.1
 export const MAX_REPAIR_PASSES = 1
 
 export const BOUNDARY_SIDES = ["top", "bottom", "left", "right"] as const
-

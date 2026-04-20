@@ -7,10 +7,7 @@ import {
 import { findInteriorDiagonalSegmentsInBufferZone } from "../functions/findInteriorDiagonalSegmentsInBufferZone"
 import { findTraceClearanceRegressions } from "../functions/findTraceClearanceRegressions"
 import { isPointNearSide } from "../functions/isPointNearSide"
-import {
-  EPSILON,
-  TRACE_CLEARANCE_REGRESSION_MAX,
-} from "../shared/constants"
+import { EPSILON, TRACE_CLEARANCE_REGRESSION_MAX } from "../shared/constants"
 import type {
   BoundaryRect,
   BoundarySide,
@@ -71,7 +68,8 @@ const countRouteViolations = (
   margin: number,
 ): number => {
   if (!route) return 0
-  return findInteriorDiagonalSegmentsInBufferZone([route], boundary, margin).length
+  return findInteriorDiagonalSegmentsInBufferZone([route], boundary, margin)
+    .length
 }
 
 /**
@@ -170,7 +168,8 @@ export const targetedBoundaryCleanup = ({
     ).filter((conflict) => !isSameNetConflict(conflict))
     if (
       candidateZeroConflicts.some(
-        (conflict) => !currentZeroConflictPairKeys.has(getConflictPairKey(conflict)),
+        (conflict) =>
+          !currentZeroConflictPairKeys.has(getConflictPairKey(conflict)),
       )
     ) {
       return false
@@ -412,7 +411,9 @@ export const targetedBoundaryCleanup = ({
     if (beforeViolationCount === 0) continue
     for (const side of sides) {
       if (
-        !points.every((point) => isPointInSideBuffer(point, boundary, side, margin))
+        !points.every((point) =>
+          isPointInSideBuffer(point, boundary, side, margin),
+        )
       ) {
         continue
       }

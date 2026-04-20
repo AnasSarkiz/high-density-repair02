@@ -141,16 +141,10 @@ const isSegmentParallelToSide = (
   switch (side) {
     case "left":
     case "right":
-      return (
-        Math.abs(dx) <= EPSILON &&
-        Math.abs(dy) > EPSILON
-      )
+      return Math.abs(dx) <= EPSILON && Math.abs(dy) > EPSILON
     case "top":
     case "bottom":
-      return (
-        Math.abs(dy) <= EPSILON &&
-        Math.abs(dx) > EPSILON
-      )
+      return Math.abs(dy) <= EPSILON && Math.abs(dx) > EPSILON
   }
 }
 

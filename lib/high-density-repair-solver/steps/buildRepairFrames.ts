@@ -192,7 +192,10 @@ const countTraceViolations = (
  */
 const getSidesForPass = (pass: number) => {
   const order = BOUNDARY_SIDES
-  const rotated = [...order.slice(pass % order.length), ...order.slice(0, pass % order.length)]
+  const rotated = [
+    ...order.slice(pass % order.length),
+    ...order.slice(0, pass % order.length),
+  ]
   return rotated
 }
 
