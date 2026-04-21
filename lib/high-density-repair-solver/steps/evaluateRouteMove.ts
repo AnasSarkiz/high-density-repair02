@@ -1,4 +1,3 @@
-import { cloneRoutes } from "../functions/cloneRoutes"
 import { createMovedRoute } from "../functions/createMovedRoute"
 import { findBoundaryTouchRegressions } from "../functions/findBoundaryTouchRegressions"
 import {
@@ -52,7 +51,11 @@ export const evaluateRouteMove = ({
   const candidateRouteIndexes = new Set<number>()
   const candidateRoutePointIndexes = new Map<number, Set<number>>()
   const movedTwoPointRouteIndexes = new Set<number>()
-  const candidateRoutes = cloneRoutes(currentRoutes)
+  // Shallow copy: unmoved routes keep reference equality with `currentRoutes`
+  // which lets `geometryCache` (WeakMap keyed on route identity) reuse
+  // previously computed geometries. Only routes that are actually moved below
+  // get replaced with a freshly created route object via `createMovedRoute`.
+  const candidateRoutes = currentRoutes.slice()
   let rejected = false
   let rejectionReason = "overlap"
   const queuedRouteIndexes = new Set<number>([routeIndex])

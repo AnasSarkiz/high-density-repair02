@@ -56,6 +56,7 @@ export const processBoundarySide = ({
   captureProgressFrames,
   lockedTwoPointRoutes,
   geometryCache,
+  allowTwoPointWithoutObstacle = false,
 }: {
   side: BoundarySide
   sample: DatasetSample | undefined
@@ -66,7 +67,8 @@ export const processBoundarySide = ({
   captureProgressFrames: boolean
   lockedTwoPointRoutes: Set<number>
   geometryCache: RouteGeometryCache
-}) => {
+  allowTwoPointWithoutObstacle?: boolean
+}): { movesAccepted: number } => {
   const { hasObstacle, moveAmount } = getMoveAmountForSide(
     sample,
     boundary,
@@ -88,6 +90,7 @@ export const processBoundarySide = ({
   }
 
   const attemptedRoutes = new Set<number>()
+  let movesAccepted = 0
 
   for (
     let routeIndex = 0;
@@ -99,7 +102,9 @@ export const processBoundarySide = ({
 
     const route = repairedRoutes[routeIndex]
     const isTwoPointRoute = (route.route?.length ?? 0) === 2
-    if (isTwoPointRoute && !hasObstacle) continue
+    if (isTwoPointRoute && !hasObstacle && !allowTwoPointWithoutObstacle) {
+      continue
+    }
 
     let evaluation = evaluateRouteMove({
       currentRoutes: repairedRoutes,
@@ -168,8 +173,11 @@ export const processBoundarySide = ({
       for (const movedTwoPointRouteIndex of evaluation.movedTwoPointRouteIndexes) {
         lockedTwoPointRoutes.add(movedTwoPointRouteIndex)
       }
+      movesAccepted += 1
     }
 
     attemptedRoutes.add(routeIndex)
   }
+
+  return { movesAccepted }
 }
